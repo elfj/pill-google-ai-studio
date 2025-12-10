@@ -1,0 +1,7 @@
+{
+  "name": "PillVision Pro (v4.0)",
+  "description": "Advanced pill recognition using HSV Saturation channel and Watershed segmentation for low-contrast detection.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}

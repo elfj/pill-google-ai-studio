@@ -8,7 +8,7 @@ const App: React.FC = () => {
   const [cvReady, setCvReady] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [fpsTarget, setFpsTarget] = useState(2);
+  const [fpsTarget, setFpsTarget] = useState(1);
   const [stats, setStats] = useState<AnalysisStats>({
     normalCount: 0,
     brokenCount: 0,
@@ -112,7 +112,7 @@ const App: React.FC = () => {
           brokenCount: result.brokenCount ?? 0,
           processingTime: Math.round(result.processingTime ?? 0),
           fps: currentFps,
-          status: '分析進行中 (HSV+Watershed)'
+          status: '分析進行中 (Area Calc)'
         }));
       }
     }
@@ -152,7 +152,7 @@ const App: React.FC = () => {
         {!cameraActive && (
           <div className="z-20 text-gray-500 flex flex-col items-center">
             <Camera size={64} className="mb-4 opacity-50" />
-            <p className="text-lg">請啟動相機開始 (HSV Saturation Mode)</p>
+            <p className="text-lg">請啟動相機開始 (Core Mode)</p>
           </div>
         )}
       </div>
@@ -164,9 +164,9 @@ const App: React.FC = () => {
           <header className="mb-8 border-b border-gray-700 pb-4">
             <h1 className="text-2xl font-bold text-white flex items-center gap-2">
               <Activity className="text-blue-500" />
-              PillVision Pro <span className="text-xs bg-purple-600 px-2 py-0.5 rounded text-white ml-2">v4.0</span>
+              PillVision Pro <span className="text-xs bg-purple-600 px-2 py-0.5 rounded text-white ml-2">v7.2</span>
             </h1>
-            <p className="text-gray-400 text-sm mt-1">HSV 分水嶺演算法 | 黃色藥錠專用</p>
+            <p className="text-gray-400 text-sm mt-1">面積計算 + 核心採樣 | 高抗噪色彩識別</p>
           </header>
 
           {/* Stats Grid */}

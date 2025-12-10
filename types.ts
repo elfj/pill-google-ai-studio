@@ -2,8 +2,10 @@ export interface Pill {
   id: number;
   x: number;
   y: number;
+  area: number;
   radius: number;
   color: { r: number; g: number; b: number };
+  colorLabel: string;
   status: 'normal' | 'broken';
 }
 
@@ -39,12 +41,17 @@ export interface OpenCV {
   matFromImageData: (imageData: ImageData) => Mat;
   split: (src: Mat, mv: any) => void;
   resize: (src: Mat, dst: Mat, dsize: any, fx?: number, fy?: number, interpolation?: number) => void;
+  countNonZero: (src: Mat) => number;
   
   // Image Processing
   cvtColor: (src: Mat, dst: Mat, code: number) => void;
   threshold: (src: Mat, dst: Mat, thresh: number, maxVal: number, type: number) => void;
+  adaptiveThreshold: (src: Mat, dst: Mat, maxValue: number, adaptiveMethod: number, thresholdType: number, blockSize: number, C: number) => void;
+  GaussianBlur: (src: Mat, dst: Mat, ksize: any, sigmaX: number, sigmaY?: number) => void;
+  Canny: (image: Mat, edges: Mat, threshold1: number, threshold2: number, apertureSize?: number, L2gradient?: boolean) => void;
   morphologyEx: (src: Mat, dst: Mat, op: number, kernel: Mat, anchor?: any, iterations?: number) => void;
   dilate: (src: Mat, dst: Mat, kernel: Mat, anchor?: any, iterations?: number) => void;
+  erode: (src: Mat, dst: Mat, kernel: Mat, anchor?: any, iterations?: number) => void;
   distanceTransform: (src: Mat, dst: Mat, distanceType: number, maskSize: number) => void;
   normalize: (src: Mat, dst: Mat, alpha: number, beta: number, normType: number) => void;
   subtract: (src1: Mat, src2: Mat, dst: Mat, mask?: Mat, dtype?: number) => void;
@@ -72,14 +79,19 @@ export interface OpenCV {
   CV_8U: number;
   CV_32S: number;
   CV_32F: number;
+  CV_8UC1: number;
   
   COLOR_RGBA2RGB: number;
+  COLOR_RGBA2GRAY: number;
   COLOR_RGB2HSV: number;
   
   THRESH_BINARY: number;
+  THRESH_BINARY_INV: number;
   THRESH_OTSU: number;
+  ADAPTIVE_THRESH_GAUSSIAN_C: number;
   
   MORPH_OPEN: number;
+  MORPH_CLOSE: number;
   MORPH_RECT: number;
   
   DIST_L2: number;

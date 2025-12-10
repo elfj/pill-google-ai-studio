@@ -1,6 +1,6 @@
 {
-  "name": "PillVision Pro (v4.0)",
-  "description": "Advanced pill recognition using HSV Saturation channel and Watershed segmentation for low-contrast detection.",
+  "name": "PillVision Pro (v7.2)",
+  "description": "Added Area Calculation feature. Displays pixel area size for each detected pill.",
   "requestFramePermissions": [
     "camera"
   ]

@@ -195,7 +195,7 @@ const App: React.FC = () => {
           <header className="mb-4 border-b border-gray-700 pb-4">
             <h1 className="text-2xl font-bold text-white flex items-center gap-2">
               <Activity className="text-blue-500" />
-              PillVision Pro <span className="text-xs bg-purple-600 px-2 py-0.5 rounded text-white ml-2">v9.6</span>
+              PillVision Pro <span className="text-xs bg-purple-600 px-2 py-0.5 rounded text-white ml-2">v9.7</span>
             </h1>
           </header>
           

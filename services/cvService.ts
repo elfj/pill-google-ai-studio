@@ -179,8 +179,8 @@ export class CVService {
     canvasOutput: HTMLCanvasElement,
     width: number,
     height: number,
-    gamma: number,    // New Param
-    contrast: number  // New Param
+    gamma: number,    
+    contrast: number  
   ): Partial<AnalysisStats> {
     const cv = window.cv;
     if (!cv || !cv.Mat) return {};
@@ -225,16 +225,14 @@ export class CVService {
       srcRGB = new cv.Mat();
       cv.cvtColor(src, srcRGB, cv.COLOR_RGBA2RGB);
 
-      // 1. Apply Contrast (Linear Transform: dest = src * alpha + beta)
-      // alpha = contrast, beta = 0
+      // 1. Apply Contrast 
       srcRGB.convertTo(srcRGB, -1, contrast, 0);
 
-      // 2. Apply Gamma Correction (Non-linear)
+      // 2. Apply Gamma Correction 
       gammaMat = new cv.Mat();
       this.applyGammaCorrection(cv, srcRGB, gammaMat, gamma);
       
-      // 3. Derive Gray from the ENHANCED image (gammaMat)
-      // This ensures detection sees the same "improved" edges that the user sees
+      // 3. Derive Gray 
       gray = new cv.Mat();
       cv.cvtColor(gammaMat, gray, cv.COLOR_RGB2GRAY); 
 
@@ -281,7 +279,7 @@ export class CVService {
 
       markers.setTo(new cv.Scalar(0), unknown);
 
-      cv.watershed(gammaMat, markers); // Watershed on ENHANCED image
+      cv.watershed(gammaMat, markers); 
 
       let markersMinMax = cv.minMaxLoc(markers);
       let maxLabel = markersMinMax.maxVal;
@@ -332,7 +330,6 @@ export class CVService {
               let nonZero = cv.countNonZero(innerMask);
               let maskToUse = nonZero > 10 ? innerMask : tempMask;
 
-              // Extract color from ENHANCED image (gammaMat)
               let meanScalar = cv.mean(gammaMat, maskToUse); 
               let r = meanScalar[0];
               let g = meanScalar[1];
@@ -372,12 +369,30 @@ export class CVService {
 
       const { clusteredPills, stats } = this.clusterPills(detectedPills);
 
-      // VISUALIZATION: Show the ENHANCED image so user sees the effect of sliders
+      // --- VISUALIZATION UPDATE (v9.7) ---
+      // No outlines (cv.circle removed)
+      // High contrast text (Black vs White) based on luminance
       clusteredPills.forEach(pill => {
-          const center = new cv.Point(pill.x, pill.y);
-          cv.circle(gammaMat, center, pill.radius + 5, pill.contourColor, 3);
+          // Calculate Luminance: 0.299R + 0.587G + 0.114B
+          // If luminance > 128 (Bright), use Black text.
+          // If luminance <= 128 (Dark), use White text.
+          const luminance = 0.299 * pill.color.r + 0.587 * pill.color.g + 0.114 * pill.color.b;
+          
+          const textScalar = luminance > 128 
+             ? new cv.Scalar(0, 0, 0, 255)       // Black
+             : new cv.Scalar(255, 255, 255, 255); // White
+
           const org = new cv.Point(pill.x - 10, pill.y + 10);
-          cv.putText(gammaMat, pill.clusterLabel, org, cv.FONT_HERSHEY_SIMPLEX, 1.0, new cv.Scalar(255, 255, 255, 255), 2);
+          
+          cv.putText(
+              gammaMat, 
+              pill.clusterLabel, 
+              org, 
+              cv.FONT_HERSHEY_SIMPLEX, 
+              1.2, 
+              textScalar, 
+              3
+          );
       });
 
       cv.imshow(canvasOutput, gammaMat);

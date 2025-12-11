@@ -1,6 +1,6 @@
 {
-  "name": "PillVision Pro (v9.6)",
-  "description": "Adaptive Color & Shape Engine (v9.6). Adds manual control sliders for Gamma (Exposure) and Contrast to help users fine-tune image quality for specific lighting conditions.",
+  "name": "PillVision Pro (v9.7)",
+  "description": "Adaptive Color & Shape Engine (v9.7). UI Update: Removes outlines and automatically adjusts label text color (Black/White) based on pill brightness for maximum contrast.",
   "requestFramePermissions": [
     "camera"
   ]

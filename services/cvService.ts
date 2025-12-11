@@ -1,4 +1,4 @@
-import { Pill, AnalysisStats } from '../types';
+import { Pill, AnalysisStats, ClusterStat } from '../types';
 
 export class CVService {
   
@@ -7,79 +7,190 @@ export class CVService {
   }
 
   /**
-   * Helper to determine color name from RGB
+   * Apply Gamma Correction manually
    */
-  private determineColor(r: number, g: number, b: number): string {
-    // Normalize to 0-1
-    const r_ = r / 255;
-    const g_ = g / 255;
-    const b_ = b / 255;
-    
-    const max = Math.max(r_, g_, b_);
-    const min = Math.min(r_, g_, b_);
-    let h = 0, s = 0;
-    const v = max;
-    
-    const d = max - min;
-    s = max === 0 ? 0 : d / max;
-    
-    if (max === min) {
-      h = 0; 
-    } else {
-      switch (max) {
-        case r_: h = (g_ - b_) / d + (g_ < b_ ? 6 : 0); break;
-        case g_: h = (b_ - r_) / d + 2; break;
-        case b_: h = (r_ - g_) / d + 4; break;
-      }
-      h /= 6;
-    }
-    
-    // Convert to degrees/percentage
-    const H = h * 360;
-    const S = s * 100;
-    const V = v * 100;
-    
-    // Classification Logic
-    
-    // 1. Achromatic (White/Gray/Black)
-    // Relaxed saturation for white (allow small color cast from indoor lights)
-    // Increased Value requirement for white to differentiate from Gray
-    if (S < 25) {
-       if (V > 60) return "白色"; 
-       if (V > 30) return "灰色";
-       return "黑色"; 
-    }
+  private applyGammaCorrection(cv: any, src: any, dst: any, gamma: number) {
+     const lut = new Uint8Array(256);
+     for (let i = 0; i < 256; i++) {
+        lut[i] = Math.max(0, Math.min(255, Math.pow(i / 255.0, gamma) * 255.0));
+     }
 
-    // 2. Chromatic
-    // Adjusted Red range to handle wrap-around better
-    if (H < 20 || H >= 340) return "紅色";
-    if (H >= 20 && H < 45) return "橘色";
-    if (H >= 45 && H < 75) return "黃色";
-    if (H >= 75 && H < 165) return "綠色";
-    if (H >= 165 && H < 260) return "藍色";
-    if (H >= 260 && H < 340) return "紫色";
+     if (src !== dst) {
+        src.copyTo(dst);
+     }
 
-    return "其他";
+     const data = dst.data; 
+     const len = data.length;
+     
+     for (let i = 0; i < len; i++) {
+         data[i] = lut[data[i]];
+     }
   }
 
-  /**
-   * Main pipeline function (v7.2 Area Calculation)
-   */
+  private getHSV(r: number, g: number, b: number) {
+    let rabs = r / 255;
+    let gabs = g / 255;
+    let babs = b / 255;
+    let v = Math.max(rabs, gabs, babs);
+    let diff = v - Math.min(rabs, gabs, babs);
+    let diffc = (c: number) => (v - c) / 6 / diff + 1 / 2;
+    let percentRoundFn = (num: number) => Math.round(num * 100) / 100;
+    let h = 0, s = 0, rr, gg, bb;
+
+    if (diff == 0) {
+        h = s = 0;
+    } else {
+        s = diff / v;
+        rr = diffc(rabs);
+        gg = diffc(gabs);
+        bb = diffc(babs);
+
+        if (rabs === v) {
+            h = bb - gg;
+        } else if (gabs === v) {
+            h = (1 / 3) + rr - bb;
+        } else if (babs === v) {
+            h = (2 / 3) + gg - rr;
+        }
+        if (h < 0) {
+            h += 1;
+        } else if (h > 1) {
+            h -= 1;
+        }
+    }
+    return {
+        h: Math.round(h * 360),
+        s: percentRoundFn(s * 100),
+        v: percentRoundFn(v * 100)
+    };
+  }
+
+  private clusterPills(pills: Pill[]): { clusteredPills: Pill[], stats: ClusterStat[] } {
+    if (pills.length === 0) return { clusteredPills: [], stats: [] };
+
+    const clusters: { 
+        label: string; 
+        center: Pill; 
+        members: Pill[]; 
+        colorHex: string;
+        colorScalar: any;
+    }[] = [];
+
+    const cv = window.cv;
+    const clusterColors = [
+        { hex: '#00FFFF', scalar: new cv.Scalar(0, 255, 255, 255) },
+        { hex: '#FF00FF', scalar: new cv.Scalar(255, 0, 255, 255) },
+        { hex: '#FFFF00', scalar: new cv.Scalar(255, 255, 0, 255) },
+        { hex: '#00FF00', scalar: new cv.Scalar(0, 255, 0, 255) },
+        { hex: '#FFA500', scalar: new cv.Scalar(255, 165, 0, 255) },
+        { hex: '#FF0000', scalar: new cv.Scalar(255, 0, 0, 255) },
+    ];
+
+    const DISTANCE_THRESHOLD = 0.14; 
+    const MAX_AREA_DIFF = 0.35; 
+    const MAX_CIRC_DIFF = 0.18; 
+    const MAX_SAT_DIFF = 20;   
+
+    const relDiff = (a: number, b: number) => {
+        const max = Math.max(Math.abs(a), Math.abs(b));
+        if (max === 0) return 0;
+        return Math.abs(a - b) / max;
+    };
+
+    pills.forEach(pill => {
+        let bestClusterIndex = -1;
+        let minDistance = Infinity;
+
+        clusters.forEach((cluster, idx) => {
+            const c = cluster.center.features;
+            const p = pill.features;
+            const cRaw = cluster.center; 
+            
+            if (relDiff(pill.area, cRaw.area) > MAX_AREA_DIFF) return; 
+            if (Math.abs(pill.features.circularity - c.circularity) > MAX_CIRC_DIFF) return; 
+            if (Math.abs(p.saturation - c.saturation) > MAX_SAT_DIFF) return;
+
+            let hDiff = Math.abs(p.hue - c.hue);
+            if (hDiff > 180) hDiff = 360 - hDiff;
+            const hDist = hDiff / 180.0;
+            const sDist = Math.abs(p.saturation - c.saturation) / 100.0;
+            const vDist = Math.abs(p.value - c.value) / 100.0;
+
+            const isGrayscale = p.saturation < 15 || c.saturation < 15;
+            const w_hue = isGrayscale ? 0.05 : 0.35; 
+            const w_sat = 0.25; 
+            const w_val = 0.05; 
+            const w_circ = 0.20; 
+            const w_size = 0.15;
+
+            const weightedDist = (
+                (hDist * w_hue) + 
+                (sDist * w_sat) + 
+                (vDist * w_val) + 
+                (Math.abs(pill.features.circularity - c.circularity) * w_circ) + 
+                (relDiff(pill.area, cRaw.area) * w_size)
+            ) / (w_hue + w_sat + w_val + w_circ + w_size);
+
+            if (weightedDist < minDistance) {
+                minDistance = weightedDist;
+                bestClusterIndex = idx;
+            }
+        });
+
+        if (bestClusterIndex !== -1 && minDistance < DISTANCE_THRESHOLD) {
+            clusters[bestClusterIndex].members.push(pill);
+        } else {
+            const newLabelChar = String.fromCharCode(65 + clusters.length);
+            const colorObj = clusterColors[clusters.length % clusterColors.length];
+            
+            clusters.push({
+                label: newLabelChar,
+                center: pill,
+                members: [pill],
+                colorHex: colorObj.hex,
+                colorScalar: colorObj.scalar
+            });
+        }
+    });
+
+    const finalPills: Pill[] = [];
+    const stats: ClusterStat[] = [];
+
+    clusters.forEach(c => {
+        stats.push({
+            label: `Group ${c.label}`,
+            count: c.members.length,
+            color: c.colorHex
+        });
+        
+        c.members.forEach(p => {
+            p.clusterLabel = c.label;
+            p.clusterColor = c.colorHex;
+            p.contourColor = c.colorScalar;
+            finalPills.push(p);
+        });
+    });
+
+    return { clusteredPills: finalPills, stats };
+  }
+
   processFrame(
     videoElement: HTMLVideoElement,
     canvasOutput: HTMLCanvasElement,
     width: number,
-    height: number
+    height: number,
+    gamma: number,    // New Param
+    contrast: number  // New Param
   ): Partial<AnalysisStats> {
     const cv = window.cv;
     if (!cv || !cv.Mat) return {};
 
     const startTime = performance.now();
-    const detectedPills: Pill[] = [];
+    let detectedPills: Pill[] = [];
 
-    // --- MEMORY TRACKING ---
     let src: any = null;
     let srcRGB: any = null;
+    let gammaMat: any = null; 
     let gray: any = null;
     let blurred: any = null;
     let edges: any = null;
@@ -87,7 +198,6 @@ export class CVService {
     let solid_mask: any = null;
     let edge_contours: any = null;
     let edge_hierarchy: any = null;
-    
     let kernel: any = null;
     let sure_bg: any = null;
     let dist: any = null;
@@ -96,14 +206,13 @@ export class CVService {
     let unknown: any = null;
     let markers: any = null;
     let ones: any = null;
-    
-    // Loop helpers
     let tempMask: any = null;
-    let innerMask: any = null; // New for erosion
-    let kernelErode: any = null; // New for erosion
+    let innerMask: any = null;
+    let kernelErode: any = null;
     let compareMat: any = null;
     let tempContours: any = null;
     let tempHierarchy: any = null;
+    let hull: any = null;
 
     try {
       const ctx = canvasOutput.getContext('2d');
@@ -111,45 +220,46 @@ export class CVService {
 
       ctx.drawImage(videoElement, 0, 0, width, height);
       const imageData = ctx.getImageData(0, 0, width, height);
-      
       src = cv.matFromImageData(imageData);
       
-      // Step 1: Preprocessing
       srcRGB = new cv.Mat();
       cv.cvtColor(src, srcRGB, cv.COLOR_RGBA2RGB);
 
-      gray = new cv.Mat();
-      cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      // 1. Apply Contrast (Linear Transform: dest = src * alpha + beta)
+      // alpha = contrast, beta = 0
+      srcRGB.convertTo(srcRGB, -1, contrast, 0);
 
-      // Blur heavily to remove texture noise inside the pill
+      // 2. Apply Gamma Correction (Non-linear)
+      gammaMat = new cv.Mat();
+      this.applyGammaCorrection(cv, srcRGB, gammaMat, gamma);
+      
+      // 3. Derive Gray from the ENHANCED image (gammaMat)
+      // This ensures detection sees the same "improved" edges that the user sees
+      gray = new cv.Mat();
+      cv.cvtColor(gammaMat, gray, cv.COLOR_RGB2GRAY); 
+
       blurred = new cv.Mat();
       cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
 
-      // Step 2: Canny Edge Detection + Contour Filling
       edges = new cv.Mat();
-      cv.Canny(blurred, edges, 30, 100); 
+      cv.Canny(blurred, edges, 25, 90); 
 
-      // Dilate edges slightly
       kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
       edge_dilated = new cv.Mat();
       cv.dilate(edges, edge_dilated, kernel);
 
-      // Find External Contours
       edge_contours = new cv.MatVector();
       edge_hierarchy = new cv.Mat();
       cv.findContours(edge_dilated, edge_contours, edge_hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
 
-      // Create a Solid Mask
       solid_mask = cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U);
       for (let i = 0; i < edge_contours.size(); i++) {
         cv.drawContours(solid_mask, edge_contours, i, new cv.Scalar(255), -1);
       }
 
-      // Step 3: Prepare Background/Foreground for Watershed
       sure_bg = new cv.Mat();
       cv.dilate(solid_mask, sure_bg, kernel, new cv.Point(-1, -1), 3);
 
-      // Step 4: Marker Generation
       dist = new cv.Mat();
       cv.distanceTransform(solid_mask, dist, cv.DIST_L2, 5);
       cv.normalize(dist, dist, 0, 1.0, cv.NORM_MINMAX);
@@ -163,7 +273,6 @@ export class CVService {
       unknown = new cv.Mat();
       cv.subtract(sure_bg, sure_fg_8u, unknown);
 
-      // Step 5: Watershed Execution
       markers = new cv.Mat();
       cv.connectedComponents(sure_fg_8u, markers);
 
@@ -172,21 +281,20 @@ export class CVService {
 
       markers.setTo(new cv.Scalar(0), unknown);
 
-      cv.watershed(srcRGB, markers);
+      cv.watershed(gammaMat, markers); // Watershed on ENHANCED image
 
-      // Step 6: Feature Extraction & Classification
       let markersMinMax = cv.minMaxLoc(markers);
       let maxLabel = markersMinMax.maxVal;
 
       tempMask = cv.Mat.zeros(markers.rows, markers.cols, cv.CV_8U);
-      innerMask = new cv.Mat(); // Reuse this
-      kernelErode = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9)); // Aggressive erosion (9x9)
-
+      innerMask = new cv.Mat(); 
+      kernelErode = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(9, 9));
       compareMat = new cv.Mat(markers.rows, markers.cols, cv.CV_32S); 
-      
       tempContours = new cv.MatVector();
       tempHierarchy = new cv.Mat();
 
+      hull = new cv.Mat();
+      
       for (let i = 2; i <= maxLabel; i++) {
         compareMat.setTo(new cv.Scalar(i));
         cv.compare(markers, compareMat, tempMask, cv.CMP_EQ);
@@ -197,32 +305,41 @@ export class CVService {
           let contour = tempContours.get(0);
           try {
             let area = cv.contourArea(contour);
-            let perimeter = cv.arcLength(contour, true);
 
-            if (area > 200 && area < 8000 && perimeter > 0) {
-              
-              let circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+            if (area > 200 && area < 10000) {
               
               let M = cv.moments(contour);
               let cx = M.m10 / M.m00;
               let cy = M.m01 / M.m00;
 
-              // --- CORE SAMPLING COLOR EXTRACTION ---
-              // Erode the mask to ignore the outer rim (which blends with background)
-              cv.erode(tempMask, innerMask, kernelErode);
+              let perimeter = cv.arcLength(contour, true);
               
-              // Safety check: if pill is too small, erosion might make it disappear. 
-              // If disappear, use original mask.
+              let circularity = 0;
+              if (perimeter > 0) {
+                  circularity = (4 * Math.PI * area) / (perimeter * perimeter);
+              }
+
+              cv.convexHull(contour, hull, false, true);
+              let convexArea = cv.contourArea(hull);
+
+              let hu0 = 0.0;
+              if (M.m00 > 0) {
+                 hu0 = (M.mu20 + M.mu02) / (M.m00 * M.m00);
+              }
+              let huLog = -1 * Math.sign(hu0) * Math.log10(Math.abs(hu0) || 1e-10);
+
+              cv.erode(tempMask, innerMask, kernelErode);
               let nonZero = cv.countNonZero(innerMask);
               let maskToUse = nonZero > 10 ? innerMask : tempMask;
 
-              let meanScalar = cv.mean(srcRGB, maskToUse);
+              // Extract color from ENHANCED image (gammaMat)
+              let meanScalar = cv.mean(gammaMat, maskToUse); 
               let r = meanScalar[0];
               let g = meanScalar[1];
               let b = meanScalar[2];
-              let colorLabel = this.determineColor(r, g, b);
-
-              let status: 'normal' | 'broken' = circularity > 0.65 ? 'normal' : 'broken';
+              
+              const hsv = this.getHSV(r, g, b);
+              const boostedSaturation = Math.min(100, hsv.s * 2.5);
 
               detectedPills.push({
                 id: i,
@@ -231,107 +348,59 @@ export class CVService {
                 area: area,
                 radius: Math.sqrt(area / Math.PI),
                 color: { r, g, b },
-                colorLabel: colorLabel,
-                status: status
+                features: {
+                    hue: hsv.h,
+                    saturation: boostedSaturation, 
+                    value: hsv.v,
+                    perimeter: perimeter,
+                    convexArea: convexArea,
+                    huMoment: huLog,
+                    circularity: circularity
+                },
+                clusterLabel: '?',
+                clusterColor: '#FFFFFF',
+                contourColor: new cv.Scalar(255, 255, 255, 255)
               });
-
-              // Draw Contour
-              let color = status === 'normal' 
-                ? new cv.Scalar(0, 255, 0, 255) 
-                : new cv.Scalar(255, 140, 0, 255);
-              cv.drawContours(srcRGB, tempContours, 0, color, 2);
             }
           } finally {
             contour.delete();
           }
         }
-        
         tempContours.delete();
         tempContours = new cv.MatVector();
       }
 
-      // Step 7: Merge Logic
-      const MERGE_THRESHOLD = 30;
-      const finalPills: Pill[] = [];
-      const processedIndices = new Set<number>();
+      const { clusteredPills, stats } = this.clusterPills(detectedPills);
 
-      detectedPills.sort((a, b) => b.radius - a.radius);
-
-      for (let i = 0; i < detectedPills.length; i++) {
-        if (processedIndices.has(i)) continue;
-
-        let current = detectedPills[i];
-        let totalX = current.x;
-        let totalY = current.y;
-        let count = 1;
-
-        for (let j = i + 1; j < detectedPills.length; j++) {
-          if (processedIndices.has(j)) continue;
-
-          let other = detectedPills[j];
-          let dist = Math.sqrt(Math.pow(current.x - other.x, 2) + Math.pow(current.y - other.y, 2));
-
-          if (dist < MERGE_THRESHOLD) {
-             totalX += other.x;
-             totalY += other.y;
-             count++;
-             processedIndices.add(j);
-          }
-        }
-        
-        current.x = totalX / count;
-        current.y = totalY / count;
-        finalPills.push(current);
-        processedIndices.add(i);
-      }
-
-      // Final Visualization (Text)
-      finalPills.forEach(pill => {
-        let idText = `#${pill.id}`;
-        let colorText = pill.colorLabel;
-        let areaText = `A:${Math.round(pill.area)}`; // Area text
-        
-        let orgId = new cv.Point(pill.x - 15, pill.y);
-        let orgColor = new cv.Point(pill.x - 20, pill.y + 15);
-        let orgArea = new cv.Point(pill.x - 20, pill.y + 30); // Position below color
-
-        // Draw ID (White)
-        cv.putText(srcRGB, idText, orgId, cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255, 255, 255, 255), 1);
-        
-        // Draw Color (Yellow)
-        cv.putText(srcRGB, colorText, orgColor, cv.FONT_HERSHEY_SIMPLEX, 0.5, new cv.Scalar(255, 255, 0, 255), 1);
-        
-        // Draw Area (Cyan)
-        cv.putText(srcRGB, areaText, orgArea, cv.FONT_HERSHEY_SIMPLEX, 0.4, new cv.Scalar(0, 255, 255, 255), 1);
-        
-        cv.circle(srcRGB, new cv.Point(pill.x, pill.y), 2, new cv.Scalar(0, 255, 255, 255), -1);
+      // VISUALIZATION: Show the ENHANCED image so user sees the effect of sliders
+      clusteredPills.forEach(pill => {
+          const center = new cv.Point(pill.x, pill.y);
+          cv.circle(gammaMat, center, pill.radius + 5, pill.contourColor, 3);
+          const org = new cv.Point(pill.x - 10, pill.y + 10);
+          cv.putText(gammaMat, pill.clusterLabel, org, cv.FONT_HERSHEY_SIMPLEX, 1.0, new cv.Scalar(255, 255, 255, 255), 2);
       });
 
-      cv.imshow(canvasOutput, srcRGB);
-
-      let normalCount = finalPills.filter(p => p.status === 'normal').length;
-      let brokenCount = finalPills.filter(p => p.status === 'broken').length;
+      cv.imshow(canvasOutput, gammaMat);
 
       return {
-        normalCount,
-        brokenCount,
+        totalCount: clusteredPills.length,
+        clusters: stats,
         processingTime: performance.now() - startTime
       };
 
     } catch (err) {
-      console.error("OpenCV Process Error:", err);
+      console.error("CV Error", err);
       return {};
     } finally {
-      // Clean up V6/V7 specific mats
+      if (hull) hull.delete();
       if (edges) edges.delete();
       if (edge_dilated) edge_dilated.delete();
       if (solid_mask) solid_mask.delete();
       if (edge_contours) edge_contours.delete();
       if (edge_hierarchy) edge_hierarchy.delete();
-
-      // Clean up Standard mats
       if (src) src.delete();
       if (srcRGB) srcRGB.delete();
+      if (gammaMat) gammaMat.delete();
       if (gray) gray.delete();
       if (blurred) blurred.delete();
       if (kernel) kernel.delete();
@@ -342,10 +411,9 @@ export class CVService {
       if (unknown) unknown.delete();
       if (markers) markers.delete();
       if (ones) ones.delete();
-      
       if (tempMask) tempMask.delete();
-      if (innerMask) innerMask.delete(); // Clean up
-      if (kernelErode) kernelErode.delete(); // Clean up
+      if (innerMask) innerMask.delete();
+      if (kernelErode) kernelErode.delete();
       if (compareMat) compareMat.delete();
       if (tempContours) tempContours.delete();
       if (tempHierarchy) tempHierarchy.delete();

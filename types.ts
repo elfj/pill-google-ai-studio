@@ -4,14 +4,35 @@ export interface Pill {
   y: number;
   area: number;
   radius: number;
+  // Raw Color
   color: { r: number; g: number; b: number };
-  colorLabel: string;
-  status: 'normal' | 'broken';
+  // Features for clustering
+  features: {
+    hue: number;        // 0-360
+    saturation: number; // 0-100
+    value: number;      // 0-100 (Brightness/Lightness)
+    
+    // Geometric Features
+    perimeter: number;     // Raw ArcLength
+    convexArea: number;    // Area of the Convex Hull
+    huMoment: number;      // 1st Hu Invariant Moment (Log transformed)
+    circularity: number;   // 4 * PI * Area / Perimeter^2 (1.0 = perfect circle) - Added v9.1
+  };
+  // Clustering Results
+  clusterLabel: string; // 'A', 'B', 'C', 'D'...
+  clusterColor: string; // Hex color for UI
+  contourColor: any;    // OpenCV Scalar
+}
+
+export interface ClusterStat {
+  label: string;
+  count: number;
+  color: string;
 }
 
 export interface AnalysisStats {
-  normalCount: number;
-  brokenCount: number;
+  totalCount: number;
+  clusters: ClusterStat[];
   processingTime: number;
   fps: number;
   status: string;
@@ -63,6 +84,10 @@ export interface OpenCV {
   findContours: (image: Mat, contours: any, hierarchy: Mat, mode: number, method: number) => void;
   contourArea: (contour: any) => number;
   arcLength: (contour: any, closed: boolean) => number;
+  boundingRect: (contour: any) => { x: number, y: number, width: number, height: number };
+  convexHull: (contour: any, hull: any, clockwise: boolean, returnPoints: boolean) => void;
+  fitEllipse: (contour: any) => { center: any, size: { width: number, height: number }, angle: number };
+  approxPolyDP: (curve: any, approxCurve: Mat, epsilon: number, closed: boolean) => void;
   mean: (src: Mat, mask?: Mat) => any;
   minMaxLoc: (src: Mat, mask?: Mat) => { minVal: number, maxVal: number, minLoc: any, maxLoc: any };
   inRange: (src: Mat, lowerb: any, upperb: any, dst: Mat) => void;
@@ -84,6 +109,7 @@ export interface OpenCV {
   COLOR_RGBA2RGB: number;
   COLOR_RGBA2GRAY: number;
   COLOR_RGB2HSV: number;
+  COLOR_RGB2GRAY: number;
   
   THRESH_BINARY: number;
   THRESH_BINARY_INV: number;
